@@ -1,11 +1,4 @@
-"""
-Is a per-finding blend weight worth anything, and can 58 studies even tell?
-
-The kernel already carries a per-finding weight vector (the V18 line, currently 0.55 everywhere), so
-this is not a new mechanism to build - it is a number to justify. The danger is obvious: fitting
-twelve weights on 58 studies will always look like a gain in-sample. So every sweep result here is
-reported beside a bootstrap that refits the weight inside each resample and scores it out of bag.
-A weight that only wins in-sample is noise wearing a result's clothes.
+"""Is a per-finding blend weight worth anything, and can 58 studies even tell?
 
 Usage: python _blend_weight.py <gold_npz_A> <gold_npz_B>   (A is the champion, B the partner)
 """

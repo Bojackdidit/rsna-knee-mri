@@ -1,15 +1,4 @@
-"""
-Rank candidate partners for the shipped champion by DECORRELATION, which is what actually decides a
-pair on this competition, and only then by solo score.
-
-Measured 2026-09-17 on the three arms whose gold files survived: a same-architecture partner sits at
-rank correlation 0.958 and adds +0.0020, a different-architecture partner sits at 0.88-0.90 and adds
-+0.0047 to +0.0062. The best pair was built from the WEAKEST solo arm. So solo gold is the wrong
-sort key.
-
-Correlation is per finding on ranks, because the blend is a rank-mean and ranks are what gets
-averaged. Everything is measured on the 58 gold studies, which is small and grades our own soft
-labels, so trust the ORDERING and not the magnitudes.
+"""Rank candidate partners for the shipped champion by decorrelation, then by solo score.
 
 Usage:
   python _arm_corr.py                       # every npz in gold_oof, champion auto-detected

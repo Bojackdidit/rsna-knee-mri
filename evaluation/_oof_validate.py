@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
-"""Out-of-fold validation over all 4,349 labelled studies - the instrument we have never had.
-
-Why this exists. Every offline call this week was made on 58 gold studies, and gold-58 predicted
-the WRONG SIGN on two board reads in one day (per-finding routing, three-family trio). The 870
-grouped fold is no better, because the shipped arms trained on all 4,349 with no holdout and so
-have memorised it. So we have been choosing blind.
-
-Fold k holds out its own 870 studies. Train all five and every one of the 4,349 studies has a
-prediction from a model that never saw it. Concatenated, that is a validation set 75x gold-58,
-honest by construction, and it is what a serious team means by a validation pipeline.
+"""Out-of-fold validation over all 4,349 labelled studies.
 
     python _oof_validate.py                 # score the OOF assembly
     python _oof_validate.py --per-finding   # add the per-finding breakdown
-
-Caveat kept in view: the soft labels are our own, so this measures agreement with them, not with
-radiologist truth ([[knee-gate-grades-own-labels]]). Size fixes the variance problem, not the
-label-bias one. Gold-58 is still reported alongside as the only radiologist-labelled check.
 """
 import argparse
 import glob

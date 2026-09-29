@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
-"""Knee corpus v11 - push the span lever further, density held at v4.
+"""Knee corpus v11 - slice span 0.02-0.98.
 
-Widening the slice span from 0.15-0.85 to 0.06-0.94 took the live board from 0.917 to
-0.923, the largest single gain this competition has produced. This build asks whether
-there is more of it: the span goes to 0.02-0.98, taking almost the whole stack, while the
-slice count stays at v4's 64 so the two builds differ in exactly one thing.
-
-Not taken all the way to 0.00-1.00 on purpose - the very first and last images of a series
-are frequently localiser or saturation frames, and including them would risk trading real
-anatomy for junk.
-
-Sharded because /kaggle/working caps at 20 GB and the full 4,407 studies are 21.9 GB.
-Set SHARD / NSHARD per kernel.
-
+Sharded because /kaggle/working caps at 20 GB. Set SHARD / NSHARD per kernel.
 Outputs: v11_vols_<shard>.npy (N,96,336,336 uint8), v11_masks_<shard>.npy, v11_ids_<shard>.npy
 """
 import os, glob, time, json
@@ -20,10 +9,9 @@ import numpy as np, pandas as pd
 
 SHARD = 0
 NSHARD = 5
-SPAN_LO, SPAN_HI = 0.02, 0.98          # v4 used 0.06-0.94; this is the one change
+SPAN_LO, SPAN_HI = 0.02, 0.98
 IMG = 336
 CROP_MM = 140.0
-# 64 -> 96, keeping v5's proportions exactly (x1.5 on each slot). 1.00%/slice.
 SLOTS = [("Sagittal", 1, 27), ("Sagittal", 0, 21), ("Coronal", 1, 18),
          ("Coronal", 0, 12), ("Axial", -1, 18)]
 MAXS = sum(s[2] for s in SLOTS)                     # 96
@@ -180,9 +168,7 @@ def main():
             print("  %d/%d ok=%d fail=%d | %.0fs | eta %.0fm"
                   % (i + 1, len(todo), ok, fail, el, el / (i + 1) * (len(todo) - i - 1) / 60),
                   flush=True)
-    # Write the volume in ~2 GB pieces. A single 9.5 GB object cannot be pulled off Kaggle
-    # reliably: the pre-signed URL ignores Range headers and every from-zero stream dies partway.
-    # Chunks complete inside one stream and the box concatenates them.
+    # Write the volume in ~2 GB chunks; a single large object cannot be pulled off Kaggle reliably.
     CHUNK_ROWS = 180
     n_chunks = (len(vols) + CHUNK_ROWS - 1) // CHUNK_ROWS
     for ci in range(n_chunks):

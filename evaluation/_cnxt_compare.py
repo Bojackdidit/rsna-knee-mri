@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Fold-0 architecture-diversity read on the OOF instrument.
-
-Compares the CoAtNet fold-0 arm (oof_LR96_CTRL) and the ConvNeXt fold-0 arm (oof_CNXT_F0) on the
-IDENTICAL 870 held-out fold-0 studies. Both predictions are genuinely out-of-fold, so a rank-mean of
-them is an honest estimate of the architecture-diverse ensemble on unseen data. Reports:
-  - each arm's macro-AUC and the rank-mean blend's macro-AUC on the 870,
-  - mean per-finding Spearman rho between the two arms (lower = more decorrelated = more to gain),
-  - paired bootstrap: how often the blend beats the stronger single arm.
-Pure numpy (no scipy dependency).
-"""
+"""Fold-0 architecture-diversity read: CoAtNet vs ConvNeXt vs their rank-mean blend. Pure numpy."""
 import numpy as np
 from sklearn.metrics import roc_auc_score
 

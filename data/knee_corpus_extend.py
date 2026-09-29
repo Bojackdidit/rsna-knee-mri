@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """Build the fixed-size slice stacks for the RSNA knee studies from the raw DICOM.
 
-Runs as a Kaggle kernel because the competition DICOM is large and Kaggle mounts it directly.
-
-Per study: take a fixed set of series slots across sagittal, coronal and axial; sample slices
-across the usable span of each series; crop to a fixed physical box using the DICOM pixel
-spacing so the field of view is consistent across acquisitions; percentile-window the
-intensities; resize to a square.
-
 Outputs: extra_vols.npy (N,44,336,336 uint8), extra_masks.npy, extra_ids.npy
 """
 import os, glob, time, json
@@ -146,8 +139,7 @@ def main():
 
     gold = set(tr[tr[LAB].notna().all(axis=1)]["StudyInstanceUID"])
     todo = [u for u in tr["StudyInstanceUID"] if u not in have and u in ser]
-    # gold studies first: they widen the evaluation gate, which matters most, and they
-    # land in the output even if the kernel hits its wall-clock limit part-way through.
+    # gold studies first, so they land in the output even if the kernel times out part-way.
     todo.sort(key=lambda u: (u not in gold))
     print("to build: %d  (of which gold: %d)" % (len(todo), len(set(todo) & gold)), flush=True)
 

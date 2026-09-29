@@ -1,13 +1,4 @@
-"""Direct DICOM reader for the RSNA knee test set.
-
-The competition files are Explicit VR Little Endian (1.2.840.10008.1.2.1), uncompressed,
-with PixelData as the final element. So both the ordering tags and the pixels can be taken
-with plain preads and a small byte scan, with no pydicom Dataset construction at all.
-
-Falls back to pydicom for any file whose transfer syntax is not explicit VR LE, or whose
-layout does not match the expected trailing-PixelData form. Returns identical values to
-pydicom by construction - verified in verify_fastdcm.py.
-"""
+"""Direct DICOM reader for the RSNA knee test set; falls back to pydicom, verified in verify_fastdcm.py."""
 import os
 import numpy as np
 
@@ -39,11 +30,7 @@ def _u32(b, o):
 
 
 def parse_header(buf):
-    """Walk explicit-VR-LE elements in buf. Returns (tags, pixel_data_offset, ok).
-
-    pixel_data_offset is the absolute file offset of the PixelData VALUE if the tag was
-    reached inside buf, else None.
-    """
+    """Walk explicit-VR-LE elements in buf. Returns (tags, pixel_data_offset, ok)."""
     if len(buf) < 140 or buf[128:132] != b"DICM":
         return None, None, False
     o = 132
@@ -171,12 +158,7 @@ def read_pixels(meta):
 
 
 def read_one(path):
-    """Metadata + pixels from a SINGLE open/read.
-
-    read_meta followed by read_pixels opens the file twice. These files are ~1.8 MB and the header
-    is the first ~1.5 KB of the same buffer, so one read serves both. Returns (meta, array) or
-    (meta_or_None, None) when the caller should fall back.
-    """
+    """Metadata + pixels from a SINGLE open/read. Returns (meta, array) or (meta_or_None, None)."""
     size = os.path.getsize(path)
     with open(path, "rb") as fh:
         buf = fh.read()

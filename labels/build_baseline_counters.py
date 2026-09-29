@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Champion kernel, unchanged reader, with the SAME counters bolted on.
-
-Gives a like-for-like Kaggle-side price for the pydicom reader on the same public studies the
-fastdcm build measured, so the speedup can be read off Kaggle's own disk instead of my warm cache.
-"""
+"""Champion kernel, unchanged reader, with the SAME counters bolted on."""
 import io, json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))

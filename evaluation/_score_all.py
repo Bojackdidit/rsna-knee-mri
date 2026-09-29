@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Score every 384-res arm on BOTH clean instruments and dump predictions with full provenance.
-
-Why both. The 870 grouped fold is big but most arms trained on it (no --group_csv), so their
-score there is memorisation. The 58 gold studies carry real radiologist labels and are excluded
-from training for EVERY arm, so gold-58 is the one instrument valid across the whole pool.
-
-Scoring both gives a contamination detector that needs no archaeology:
-
-    delta = macro(870) - macro(gold58)
-
-An arm that held the 870 out has no reason for a large positive delta. An arm that trained on it
-does. That recovers the provenance the old dumps never recorded.
-
-Runs unattended: every arm is independently guarded, results append to a JSONL after each arm, so
-a failure costs one arm rather than the night. Resumes by skipping arms already in the JSONL.
-"""
+"""Score every 384-res arm on both clean instruments (870 fold + gold-58) and dump predictions with provenance."""
 import glob
 import json
 import os

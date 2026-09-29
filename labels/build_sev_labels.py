@@ -1,36 +1,5 @@
 #!/usr/bin/env python3
-"""Build an improved training label set from the severity distributions. CPU only, no GPU.
-
-WHY
----
-The labeler emits a full 4-class SEVERITY distribution per finding (`conf_all.json`, 4407 studies,
-12 findings x P(s=0..3)). The shipped label set collapses that to a single confidence. Measured on
-the 58 gold studies, how you collapse it is worth more than any architecture change we have ever
-made:
-
-    P(s>=1)  "presence"          macro 0.8503
-    P(s>=2)  "threshold"         macro 0.8780
-    P(s>=3)  "severe"            macro 0.7367
-    E[s]     expected severity   macro 0.8957   <- best, and it needs NO per-finding fitting
-
-A per-finding bootstrap-gated mix of the four scored 0.8926 - WORSE than plain E[s] - so the simple
-global rule wins and there is no overfitting risk. This matters because the competition's ground
-truth is defined by explicit severity thresholds (">50% of fibres", ">50%-thickness cartilage loss"),
-so a presence label is answering a different question than the one being scored.
-
-The shipped `labels_confdist` correlates only **0.754** with E[s] (Fracture just 0.516), so the two
-are partly independent signals of comparable strength. This blends them per finding in RANK space,
-which is the same operation the kernel already uses to combine arms.
-
-Synovitis is handled separately: its shipped labels are 63.2% "mushy" (in [0.3,0.7]) with std 0.140
-- the labeler parks nearly everyone at ~0.40 and the model gets almost no gradient. Severity is not
-much better there (E[s] 0.781). Flagged, not silently averaged.
-
-Outputs a drop-in parquet with the same 13 columns as every other label file.
-
-Usage:
-    python build_sev_labels.py --out labels_sevblend.parquet --w 0.5
-"""
+"""Build an improved training label set from the severity distributions. CPU only, no GPU."""
 import argparse, json
 import numpy as np, pandas as pd
 
@@ -77,8 +46,7 @@ def main():
     from scipy.stats import spearmanr
     for j, l in enumerate(LAB):
         r = spearmanr(S[:, j], es[:, j]).statistic
-        # Rank-blend, then rescale to the shipped label's own mean so pos_weight and the loss
-        # scale are unchanged. BCE reads a probability, so the range must stay comparable.
+        # rank-blend, then rescale to the shipped label's own mean
         b = a.w * rankpct(es[:, j]) + (1 - a.w) * rankpct(S[:, j])
         b = b / max(b.mean(), 1e-6) * S[:, j].mean()
         out[:, j] = np.clip(b, 0.0, 1.0)
@@ -90,12 +58,7 @@ def main():
         print("%-18s %8.3f %8.3f  %s" % (l, r, out[:, j].mean(), note))
 
     if a.calibrate:
-        # ---- prevalence calibration + silence floor, both fitted on the 58 gold studies ----
-        # AUC is invariant to a monotone per-finding transform, so this CANNOT change the label's
-        # own ranking quality. What it changes is the TRAINING SIGNAL: BCE drives the model toward
-        # the target value, and the shipped targets are systematically under-called (ACL truth
-        # 0.414 vs target 0.172; Fracture 0.310 vs 0.161). A target of 0.16 for a finding that is
-        # really present 31% of the time under-trains it. Only a training run can validate this.
+        # prevalence calibration + silence floor, both fitted on the 58 gold studies
         import json as _json
         _tr = pd.read_csv(a.train_csv); _tr["StudyInstanceUID"] = _tr["StudyInstanceUID"].astype(str)
         _g = _tr[_tr[LAB].notna().all(axis=1)].set_index("StudyInstanceUID")
@@ -111,14 +74,9 @@ def main():
             sil = _C[:, j, 0] > 0.9
             floor = float(_Y[sil, j].mean()) if sil.sum() >= 5 else 0.0
             before = float(out[:, j].mean())
-            # rescale to gold prevalence (monotone -> ranking untouched), then lift the
-            # confidently-silent group to its measured positive rate instead of ~0
+            # rescale to gold prevalence, then lift the confidently-silent group
             out[:, j] = np.clip(out[:, j] / max(before, 1e-6) * prev, 0.0, 1.0)
             if a.silence_floor:
-                # ⚠️ MEASURED COST: a hard floor TIES the confidently-silent group, and on gold-58
-                # that costs -0.0068 macro of the label's own ranking (Fracture -0.036, Synovitis
-                # -0.028, Medial OA -0.026). The prevalence rescale above is monotone and therefore
-                # free; this is not. Off by default. Only turn it on if a board read justifies it.
                 silent_all = C[:, j, 0] > 0.9
                 out[silent_all, j] = np.maximum(out[silent_all, j], floor)
             print("%-18s %9.3f %9.3f %9.3f %9.3f" % (l, prev, before, out[:, j].mean(), floor))

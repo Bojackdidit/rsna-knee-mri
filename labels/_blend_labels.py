@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""Score every public label source against our 58 gold studies, then every rank-blend with ours.
-
-WHY. Yann Majewski (0.936 LB, single fold, small resnet @224) reports "combined my labels with some
-public dataset and it increased lb score by 0.015" - the largest single number any competitor has
-attached to anything in this competition. memory/rsna-labels-are-not-the-ceiling closes label work
-only for RE-EXTRACTING with a bigger LLM ("reopen only with a genuinely new mechanism"); averaging
-several INDEPENDENT extractions is a different mechanism - it cancels extraction variance rather
-than trying to beat it.
-
-Blending is done in RANK space per finding, which is the same operation the kernel already uses to
-combine arms, and is scale-free so sources with different calibration can be averaged safely.
-
-The 58-study ruler cannot resolve differences below ~0.02 macro and has mispredicted the board 8+
-times (memory/gold58-gate-is-retired). This ranks CANDIDATES; the board decides.
-"""
+"""Score every public label source against our 58 gold studies, then every rank-blend with ours."""
 import glob, json, os, sys
 import numpy as np, pandas as pd
 from itertools import combinations
@@ -72,7 +58,7 @@ def load_csv(path):
     return m.astype(float)
 
 
-# ours: E[s] over the severity distribution, the best collapse we measured (macro 0.8957)
+# ours: E[s] over the severity distribution
 conf = json.load(open("phase2/labels_v2/conf_all.json"))
 ours = np.array([[sum(k * p for k, p in enumerate(conf[u][j])) for j in range(12)]
                  for u in GIDS], dtype=float)
@@ -90,9 +76,7 @@ print("-" * 68)
 scored, leaks = {}, []
 for k, m in sorted(srcs.items()):
     s, _ = macro(m)
-    # LEAK GUARD. The 58 annotated studies sit in train.csv in the clear, so a published label file
-    # can simply carry them. Such a file scores ~1.0 here and is worth nothing - it has copied the
-    # ruler, not beaten it. Detect it by agreement with gold on the gold rows, not by the AUC.
+    # LEAK GUARD: a file that just carries the 58 gold rows scores ~1.0; detect by agreement with gold
     agree = np.nanmean((np.nan_to_num(m, nan=-1) >= 0.5).astype(int) == Y)
     leak = s >= 0.995 or agree >= 0.99
     scored[k] = -1.0 if leak else s

@@ -1,25 +1,9 @@
 #!/usr/bin/env python3
-"""Score every arm and every pair on the COMMON held-out studies. Usage: pair_report.py [dirs...]
-
-Only arms that HELD OUT the fold may appear here. The champion arms (`champ_*`) trained on all 4,349
-studies with no holdout, so the 870 gate studies were in their training data and their 0.939 is
-memorisation - they are excluded by name, not by judgement.
-
-Pairs are what ship (one arm per GPU, rank-mean blended), and the pair is not predicted by the solo
-scores: cross-family pairs beat same-family ones because the outputs decorrelate (CoAtNet vs effv2s
-0.8875, CoAtNet vs CoAtNet 0.9357).
-
-The one anchor to the board: eff384_a + eff384_b scored gate 0.9164 -> BOARD 0.918. It is a single
-point, so it gives a direction, not a calibration.
-"""
+"""Score every arm and every pair on the COMMON held-out studies. Usage: pair_report.py [dirs...]"""
 import numpy as np, os, sys, itertools
 from sklearn.metrics import roc_auc_score
 
-# --ids FILE restricts scoring to an explicit study list. Needed because arms trained with
-# --reclaim hold out only part of the fold: E0 (reclaim 0.7) trained on 520 of the 870 fold-0
-# studies, so scoring it on the full fold grades it partly on its own training data and inflates
-# it against arms that held the whole fold out. Restricting every arm to the 350 studies E0 never
-# saw makes the comparison honest for all of them at once.
+# --ids FILE restricts scoring to an explicit study list.
 _argv = sys.argv[1:]
 IDS = ""
 if "--ids" in _argv:

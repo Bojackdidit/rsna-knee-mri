@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
-"""Knee corpus v2 - identical to the shipped corpus except for the slice SPAN.
+"""Knee corpus v2 - drop-in replacement for the shipped corpus, slice span widened to 0.06-0.94.
 
-The shipped corpus takes its k slices per series from the central 70% of the stack
-(indices 0.15n to 0.85n). That crop throws away the peripheral slices, and the two
-findings the model is worst at - MCL 0.821 and Lateral Meniscus 0.849 on the
-633-study held-out OOF - are collateral/peripheral structures that live exactly
-there. This build widens the span to 0.06n-0.94n and changes NOTHING else.
-
-Same SLOTS, same 44 slices, same 336px, same windowing, same mm-crop, and the study
-order is taken from the existing corpus ids so the output is a drop-in replacement:
-identical shape, identical row order, so all_ids.npy / all_masks.npy / the fold file
-and the labels all still line up, and inference runtime is unchanged.
-
-Sharded because /kaggle/working caps at 20 GB and the full 4,407 studies are 21.9 GB.
-Set SHARD / NSHARD per kernel.
-
+Same SLOTS, 44 slices, 336px, windowing, mm-crop and study order, so the ids / masks / fold file
+and labels all still line up. Sharded because /kaggle/working caps at 20 GB; set SHARD / NSHARD.
 Outputs: v2_vols_<shard>.npy (N,44,336,336 uint8), v2_masks_<shard>.npy, v2_ids_<shard>.npy
 """
 import os, glob, time, json
@@ -22,7 +10,7 @@ import numpy as np, pandas as pd
 
 SHARD = int(os.environ.get("SHARD", "0"))
 NSHARD = int(os.environ.get("NSHARD", "2"))
-SPAN_LO, SPAN_HI = 0.06, 0.94          # was 0.15, 0.85 - the one change
+SPAN_LO, SPAN_HI = 0.06, 0.94
 IMG = 336
 CROP_MM = 140.0
 SLOTS = [("Sagittal", 1, 12), ("Sagittal", 0, 10), ("Coronal", 1, 8),

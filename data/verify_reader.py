@@ -1,9 +1,4 @@
-"""Exact-contract check for the two champion-kernel functions I am replacing.
-
-_hdr_one and read_px are copied verbatim from knee-mri-raptor-solo-2gpu.ipynb, then re-implemented
-on fastdcm. Both must agree exactly: the ordering key drives slice SELECTION and read_px drives the
-pixels, so any drift here is a score change.
-"""
+"""Exact-contract check for the two champion-kernel functions being replaced by fastdcm."""
 import glob, os, sys, time
 import numpy as np
 import pydicom
@@ -66,8 +61,7 @@ def read_px_fast(f):
     if m.has_rescale and not (m.slope == 1.0 and m.inter == 0.0):
         a = (a.astype(np.float64) * m.slope + m.inter).astype(np.float32)
     else:
-        # slope 1 / intercept 0: apply_modality_lut's float64 multiply is the identity, and
-        # uint16 -> float32 is exact (65535 < 2**24), so this is the same array, one copy fewer.
+        # slope 1 / intercept 0: uint16 -> float32 is exact (65535 < 2**24), same array
         a = a.astype(np.float32)
     if m.photo == 'MONOCHROME1':
         a = a.max() - a

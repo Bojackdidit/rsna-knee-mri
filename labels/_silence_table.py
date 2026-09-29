@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Measure what SILENCE means, per finding, on our own corpus and our own gold studies.
-
-The competitor post that prompted this (stevenleehans, +41) measured it on THEIR labels, where an
-unaddressed finding comes back as a literal 0.5. Ours are different and in the worse direction:
-`conf_all.json` is near one-hot, so our labeller coerces "the report never mentions this" into a
-CONFIDENT ZERO. If a third of silent knees really do have synovitis, we are not merely uninformed
-there - we are training on confident false negatives.
-
-So this borrows the QUESTION and none of the numbers. Mention detection reuses the ANAT lexicon in
-phase2/label_extract.py, which was built and gold-validated here.
-"""
+"""Measure what SILENCE means, per finding, on our own corpus and our own gold studies."""
 import json, re, sys, unicodedata
 import numpy as np, pandas as pd
 

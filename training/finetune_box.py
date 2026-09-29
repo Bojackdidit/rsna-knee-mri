@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""Fine-tune Raptor (our SSL knee encoder) on the 12-finding RSNA knee task.
-
-Loads the Raptor ViT-S/16 backbone from an SSL checkpoint, attaches a per-diagnosis
-attention-MIL head, and FULLY fine-tunes (trainable encoder) on LLM soft labels.
-Gate = macro-AUC on the 45 in-corpus gold studies (held out of training).
-
-Design mirrors the proven recipe (per-finding attention over the slice/window set,
-weighted BCE, AdamW OneCycle) but with the encoder trainable instead of frozen features.
-
-Runs bf16 on a single 4070Ti.
-
-Controls / gate:
-  * --ckpt raptor_ssl_last.pt   fine-tune the finished Raptor encoder
-  * --ckpt none                 random-init ViT-S control (proves SSL pretrain adds value)
-  * early ckpt (e.g. raptor_ssl_ep20.pt) validates the pipeline fast
-
-Examples:
-  python finetune_raptor.py --smoke                         # tiny correctness run
-  python finetune_raptor.py --ckpt ckpt/raptor_ssl_ep20.pt --limit 800 --epochs 4   # pipeline-validate
-  python finetune_raptor.py --ckpt ckpt/raptor_ssl_last.pt --epochs 12 --tag full   # real run
-Outputs (per --tag): raptor_ft_<tag>.pt (best), raptor_gold_<tag>.npz (gold preds+truth+ids), raptor_ft_<tag>.json
-"""
+"""Fine-tune Raptor (our SSL knee encoder) on the 12-finding RSNA knee task."""
 import math
 import os, sys, time, json, math, random, argparse
 import numpy as np, pandas as pd
@@ -30,9 +9,6 @@ from sklearn.metrics import roc_auc_score
 import timm
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # my workspace: ckpt + outputs
-# The corpus previously lived in a session temp scratchpad; the 2026-09-25 reboot cleanup deleted
-# it and every run died at load. Default now points at the durable byte-verified copy (its parent
-# local_box holds train.csv and labeler/).
 DATA = os.environ.get("KNEE_DATA_ROOT", r"D:\claude2\main_track\knee\phase2\local_box\raptor")
 RSNA = os.path.dirname(DATA)  # .../rsna_knee (train.csv, labeler/)
 AUG_SET = set()      # set from --aug; comma list of geo,erase,blur,noise,scanner
@@ -40,29 +16,6 @@ CENTRE_FRAC = 1.0   # set from --centre_frac; 1.0 = original full-range sampling
 SORT_WINDOWS = False   # True only for order-sensitive heads (GRU)
 SLICE_DILATE = 1    # set from --slice_dilate; window is [c-d, c, c+d]. d=1 is the original.
 CROP_FRAC = 1.0     # set from --crop_frac; centre-crop of H,W before resize (joint magnification)
-# The 44-slice corpus is FIVE SEQUENCE SLOTS concatenated, boundaries recovered from the mask's
-# per-index validity: 12/10/8/6/8 = Sagittal-FS, Sagittal, Coronal-FS, Coronal, Axial (slot 3 is
-# present in only 74% of studies). Inference opens EVERY DICOM header in EVERY series to sort
-# slices, so fewer SERIES is the only lever on scoring time - and the arm must be trained on the
-# same subset or it is a train/serve mismatch.
-# ============================================================================
-# CORPUS GEOMETRY - the single most expensive mistake this project has made.
-# ============================================================================
-# ⛔ 2026-09-13: TRAIN AND SERVE WERE RUNNING DIFFERENT GEOMETRIES, and had been for weeks.
-#     _setup_box.sh:28   assert v.shape == (4407, 44, 336, 336)      <- what we TRAINED on
-#     every serve kernel SLOTS 27/21/18/12/18, MAXS = 96             <- what we SERVE
-# 44 slices at span 0.06-0.94 against 96 slices at span 0.02-0.98. A window is three physically
-# ADJACENT CORPUS slices stacked as RGB, so at 44 that triplet spans 2.18x MORE anatomy than the
-# triplet the kernel hands the model at test time - the third channel, the only 3D information the
-# model has, is systematically wrong at inference. The serve volume also contains peripheral slices
-# (2-6% and 94-98% of each series) the model has never seen, and the kernel's own comment says that
-# is exactly where the collateral ligaments and the lateral meniscus sit.
-# The board record is unambiguous: across TWELVE reads and EIGHT architectures, no Vast-box-trained
-# arm has ever cleared 0.928, while the two v11-matched arms give 0.941.
-#
-# So FULL_SLOTS is no longer a hard-coded constant that silently describes the wrong corpus. It is
-# DERIVED from the corpus actually on disk, and `--expect_depth` (default 96, what the kernel serves)
-# makes an off-geometry run FAIL LOUDLY instead of burning credit and producing an unshippable arm.
 GEOMETRY_BY_DEPTH = {
     # depth: (slot boundaries, builder, span, status)
     96: ([(0, 27), (27, 48), (48, 66), (66, 78), (78, 96)], "knee_corpus_v11.py", (0.02, 0.98),
@@ -77,12 +30,7 @@ FULL_SLOTS = GEOMETRY_BY_DEPTH[SERVE_DEPTH][0]
 
 
 def set_geometry(depth, expect=SERVE_DEPTH, allow_mismatch=False):
-    """Point FULL_SLOTS at the corpus that is actually on disk, and refuse a silent mismatch.
-
-    Returns the slot list. Raises unless the depth matches `expect` or the caller has explicitly
-    opted into an off-geometry run. Failing here costs seconds; failing to fail here has cost this
-    project roughly three weeks of GPU and twelve board reads.
-    """
+    """Point FULL_SLOTS at the corpus actually on disk, and refuse a silent mismatch."""
     global FULL_SLOTS
     if depth not in GEOMETRY_BY_DEPTH:
         raise SystemExit(
@@ -125,18 +73,7 @@ LAB = ["ACL","MCL","Medial Meniscus","Lateral Meniscus","Medial OA","Lateral OA"
 
 # ------------------------------- data ----------------------------------------
 def apply_aug(x):
-    """Standard augmentation stack, each piece independently switchable via --aug.
-
-    Ablating augmentation is the step an 11th-place competitor puts immediately after the baseline
-    ("ablate through the standard image augmentation stacks ... Change one thing at a time"), and it
-    is the one we had never touched: by default this trainer applied a +/-10% global gain and nothing
-    else. No rotation, no scale, no translation, no erasing, no blur. Our arms plateau from about
-    epoch 12-16 on 3,479 studies, which is what a bare stack looks like.
-
-    NO FLIPS, ever. Laterality is signal in this task (medial vs lateral findings are distinct
-    labels) and a horizontal flip relabels the knee. Everything here is either intensity-domain or a
-    small rigid/affine warp that preserves left-right orientation.
-    """
+    """Standard augmentation stack, each piece independently switchable via --aug. No flips (laterality is signal)."""
     K = x.shape[0]
     if "geo" in AUG_SET:
         # small affine: rotation +/-10 deg, scale +/-10%, translation +/-5%. One sample per window.
@@ -195,12 +132,6 @@ class StudyWindows(Dataset):
             self.masks = np.load(os.path.join(self.root, "all_masks.npy"))                 # (N,D) u8
 
     def _centers(self, valid):
-        # A window is three PHYSICALLY ADJACENT slices of ONE series stacked as RGB. The old code
-        # built `range(lo+1, hi)` contiguously between the first and last valid index, which ignores
-        # both dropped slots and the boundaries BETWEEN slots: at 44 slices with 5 slots there are 4
-        # boundaries, so centres at 11, 21, 29, 35 produced triples spanning two different series
-        # (e.g. slices 10,11,12 = Sagittal-FS, Sagittal-FS, Sagittal). Roughly a fifth of every
-        # window ever trained on mixed two acquisitions into one image.
         # A centre is admissible only if c-1, c and c+1 are all valid AND all inside the same slot.
         _vs = set(int(v) for v in valid)
         _d = int(getattr(self, "_D", 0)) or (int(valid.max()) + 1)
@@ -210,15 +141,7 @@ class StudyWindows(Dataset):
         if not cs:
             lo, hi = int(valid.min()), int(valid.max())
             cs = [max(1, min((lo + hi) // 2, max(_d - 2, 1)))]
-        # Centre-concentrated sampling. Both branches below otherwise spread windows across the
-        # WHOLE valid range (train shuffles all of it, eval linspaces all of it), which is the
-        # losing arm of a published slice-geometry result for this competition:
-        #   192px / no crop / 24 spread      0.7695 OOF
-        #   288px / 140mm crop / 12 adjacent 0.7777
-        #   288px / 140mm crop / centre-9    0.7815
-        # ("slice geometry mattered more than resolution"). CENTRE_FRAC keeps only the middle
-        # fraction of candidate centres, applied identically to train and eval so the two stay
-        # consistent. 1.0 reproduces the previous behaviour exactly.
+        # CENTRE_FRAC keeps only the middle fraction of candidate centres (train and eval alike).
         if CENTRE_FRAC < 1.0 and len(cs) > 3:
             keep = max(3, int(round(len(cs) * CENTRE_FRAC)))
             mid = (len(cs) - keep) // 2
@@ -228,9 +151,7 @@ class StudyWindows(Dataset):
             pool = (cs * reps)
             random.shuffle(pool)
             _bag = pool[:self.k]
-            # A GRU reads the windows as an ORDERED sequence - a tear runs across consecutive
-            # slices - so the random bag has to be put back into slice order or the recurrence is
-            # modelling noise. Pooling heads are order-agnostic and are left exactly as they were.
+            # GRU needs windows in slice order; pooling heads are order-agnostic.
             return sorted(_bag) if SORT_WINDOWS else _bag
         # eval: evenly spaced deterministic
         idx = np.linspace(0, len(cs) - 1, self.k).round().astype(int)
@@ -244,9 +165,6 @@ class StudyWindows(Dataset):
         if KEEP_SLOTS is not None:
             _keep = np.zeros(len(m), bool)
             for _si in KEEP_SLOTS:
-                # FULL_SLOTS, not CORPUS_SLOTS: the latter is the 2-slot 224 subset corpus and has
-                # only two entries, so `--slots 0,2,4` raised IndexError and `--slots 0,1` silently
-                # selected the wrong slice ranges. The file's own comment above warned about this.
                 _a, _b = FULL_SLOTS[_si]
                 _keep[_a:min(_b, len(m))] = True
             m = (np.asarray(m) > 0) & _keep
@@ -259,17 +177,9 @@ class StudyWindows(Dataset):
             c = max(1, min(c, self._D - 2))
             _d = SLICE_DILATE
             _lo = max(0, c - _d); _hi = min(vol.shape[0] - 1, c + _d)
-            # Dilated window: same THREE channels and therefore the same cost per forward, but a
-            # far wider span of the stack. Nine dilated windows cover what twenty-seven tight ones
-            # do, which is the only way to buy evidence without buying runtime.
             tri = np.stack([vol[_lo], vol[c], vol[_hi]], 0).astype(np.float32) / 255.0  # (3,H,W)
             t = torch.from_numpy(tri)
-            # ROI crop: keep the middle CROP_FRAC of H,W so the joint fills more of the frame before
-            # the resize. a published ladder put a 140mm physical crop at the centre of the only
-            # geometry result anyone published, and this is the one lever on our pipeline still
-            # outside the ~0.008 band where seven architectural levers all died.
-            # Train jitters the crop centre by +/-4% for augmentation; eval takes the exact centre so
-            # it matches what the inference kernel must do.
+            # ROI crop: keep the middle CROP_FRAC of H,W. Train jitters the centre +/-4%; eval takes the exact centre.
             if CROP_FRAC < 1.0:
                 _H, _W = int(t.shape[-2]), int(t.shape[-1])
                 _ch, _cw = int(round(_H * CROP_FRAC)), int(round(_W * CROP_FRAC))
@@ -293,11 +203,7 @@ class StudyWindows(Dataset):
             if AUG_SET:
                 x = apply_aug(x)
             if AUG_SCANNER:
-                # Anti-scanner augmentation. Measured 2026-09-09: the model's twelve outputs
-                # predict the acquiring scanner at 2.1x chance and per-scanner AUC spreads 0.048,
-                # so it keys on equipment signature. These are the axes equipment actually varies
-                # along - global gain alone (above) does not cover them. All INTENSITY-domain:
-                # no geometry is touched, so laterality stays intact.
+                # anti-scanner augmentation, intensity-domain only (no geometry, laterality intact)
                 x = x.pow(0.8 + random.random() * 0.45)                        # gamma
                 c = 0.85 + random.random() * 0.30                              # contrast about the mean
                 x = ((x - x.mean()) * c + x.mean()).clamp(0, 1)
@@ -331,17 +237,12 @@ def collate(batch):
 
 # ------------------------------- model ---------------------------------------
 def build_backbone(arch="vit_small_patch16_224", pretrained=False, drop_path=0.0):
-    # Substring matching here silently mis-built every hybrid: "vit" is inside
-    # "maxxvitv2_rmlp_base_rw_384", so MaxViT was given global_pool="token" and
-    # dynamic_img_size=True and died on MaxxVitCfg. Match the family at the start of the
-    # name instead. CoAtNet/MaxViT/Swin are conv-transformer hybrids and pool like CNNs.
+    # match the family at the START of the name, not as a substring (hybrids like MaxViT pool like CNNs)
     _VIT = ("vit", "deit", "dinov2", "eva", "beit")
     is_vit = any(arch.startswith(k) or ("_" + k + "_") in arch for k in _VIT)
     kw = dict(pretrained=pretrained, num_classes=0, in_chans=3)
     if drop_path and drop_path > 0:
-        # Stochastic depth. The standard regulariser that makes a long schedule productive instead
-        # of merely overfit; we have never passed it at all. timm accepts it on both CNN and ViT
-        # families, so it is safe to set generically.
+        # stochastic depth
         kw["drop_path_rate"] = float(drop_path)
     if is_vit:                                    # ViT-family: CLS token + interpolatable pos-embed
         kw.update(global_pool="token", dynamic_img_size=True)
@@ -373,34 +274,14 @@ class RaptorClassifier(nn.Module):
     def __init__(self, backbone, F_dim=384, n=12, drop=0.2, n_slot=0, pool="attn"):
         super().__init__()
         self.backbone = backbone
-        # How the per-window features become one vector per study.
-        #   "attn"  per-finding softmax attention over windows - what every arm we have ever shipped
-        #           uses, and what an 11th-place competitor explicitly lists as an EXPERIMENTAL thing
-        #           to try LAST, after a simple baseline is built up.
-        #   "mean" / "max"  plain pooling over windows, no learned weighting. He reports 0.94+ at
-        #           224px with a ResNet34/EffNetB0 and simple pooling, which is both a different
-        #           architecture AND roughly an order of magnitude cheaper per study than ours.
-        # Kept as a flag rather than a rewrite so the two are measurable against each other on the
-        # same fold, same labels, one variable.
+        # pool: "attn" per-finding window attention, "mean"/"max" plain pooling.
         self.pool = pool
         self.norm = nn.LayerNorm(F_dim)
-        # Per-sequence-slot embedding. Every finding currently reads the same globally-pooled vector
-        # and the head has no idea whether a window came from the sagittal, coronal or axial stack -
-        # so per-finding window attention cannot prefer the plane a finding is actually visible in.
-        # The measured symptom is outputs that over-correlate (+0.168 median across all 66 pairs)
-        # with the weakest findings being the localized ones (MCL, Synovitis, Lateral Meniscus).
-        # ZERO-initialised, so at step 0 this is bit-identical to the model without it and the
-        # optimiser buys plane-selectivity only where it pays.
+        # per-sequence-slot embedding; zero-init so step 0 matches the plain head
         self.slot_emb = nn.Embedding(n_slot, F_dim) if n_slot else None
         if self.slot_emb is not None:
             nn.init.zeros_(self.slot_emb.weight)
-        # Sequence head. The RSNA-2023 and RSNA-2022 first-place solutions both used this shape -
-        # a 2.5D CNN encoder feeding a recurrent head over the ordered slice windows - while every
-        # arm we have shipped uses order-agnostic pooling, which cannot represent a tear running
-        # across consecutive slices at all. It is also architecturally unlike our existing stack,
-        # so it decorrelates the blend rather than adding another near-twin.
-        # GATED TO ZERO at init, so step 0 is bit-identical to pool="attn" and the optimiser buys
-        # the recurrence only where it pays.
+        # GRU sequence head over ordered windows; gated to zero at init (parity with attn)
         self.gru = None
         if pool == "gru":
             self.gru = nn.GRU(F_dim, F_dim // 2, batch_first=True, bidirectional=True)
@@ -440,22 +321,7 @@ class RaptorClassifier(nn.Module):
 
 # ------------------------------- train ---------------------------------------
 def make_loss(pw, mode="bce", rank_w=0.0):
-    """Training objective.
-
-    mode="bce"        the incumbent: one BCEWithLogits mean over every cell of the (B,12) matrix.
-                      A finding whose soft labels sit almost entirely near 0 produces a small loss
-                      AND a small gradient, so it is effectively down-weighted during training.
-                      That is exactly the profile of our weakest findings - Synovitis is 84%
-                      report-silent and Fracture 93% confident-zero.
-    mode="macro_bce"  equalise the per-finding gradient magnitude, then average the twelve. Note
-                      that naively taking l.mean(0).mean() is NOT this - for a full matrix it is
-                      algebraically identical to l.mean(). Real macro weighting has to divide by
-                      each finding's own detached scale.
-    rank_w            weight on a pairwise ranking surrogate. BCE optimises calibration; the
-                      competition scores ORDER only. Every (positive, negative) pair within the
-                      batch contributes softplus(-(s_pos - s_neg)), per finding. Costs nothing at
-                      inference.
-    """
+    """Training objective: bce, macro_bce (equalise per-finding gradient), plus optional pairwise-rank surrogate."""
     bce = nn.BCEWithLogitsLoss(pos_weight=pw, reduction="none")
 
     def _rank(logits, y):
@@ -546,10 +412,6 @@ def main():
                          "geometry in a few epochs rather than retrained from scratch")
     ap.add_argument("--centre_frac", type=float, default=1.0,
                     help="keep only the middle fraction of candidate window centres")
-    # Scanner-GROUPED validation (opt-in; default behaviour is unchanged).
-    # Our 5 existing folds are 99% scanner-contaminated and the model's outputs predict the
-    # scanner at 2.1x chance, so random-fold OOF is optimistic. Holding out whole scanner
-    # fingerprints gives a gate that measures generalisation to unseen equipment instead.
     ap.add_argument("--ema", type=float, default=0.0,
                     help="EMA decay (0.9998 per spec). Evaluates and SAVES the EMA weights; 0 = off")
     ap.add_argument("--mixup", type=float, default=0.0,
@@ -596,8 +458,7 @@ def main():
         a.epochs, a.bs, a.k, a.k_eval, a.limit, a.workers = 2, 4, 4, 6, 40, 0
     print(f"device {dev} | res {a.res} | k {a.k}/{a.k_eval} | bs {a.bs} | tag {a.tag}", flush=True)
 
-    # ---- geometry gate: FIRST, before a model or a dataloader exists ----
-    # Costs one memmap header read. Catches the mismatch that capped every box-trained arm at 0.928.
+    # ---- geometry gate ----
     _gdepth = int(np.load(os.path.join(DATA, "all_vols.npy"), mmap_mode="r").shape[1])
     set_geometry(_gdepth, expect=a.expect_depth, allow_mismatch=a.allow_geometry_mismatch)
 
@@ -608,9 +469,6 @@ def main():
     tr = pd.read_csv(os.path.join(RSNA, "train.csv")); tr["StudyInstanceUID"] = tr["StudyInstanceUID"].astype(str)
     gold_df = tr[tr[LAB].notna().all(axis=1)].copy().set_index("StudyInstanceUID")
     gold_ids = [u for u in gold_df.index if u in idset]
-    # Which soft-label set to train on. Our BEST live arm (confdist_swa, gold 0.9266) was fitted
-    # on labels_confdist.parquet, while the default here is the plain LLM set - which is why a
-    # fresh 8-epoch run reproduced only 0.8785. All sets are drop-in: 4349 rows, same 13 columns.
     _lab_path = a.labels if os.path.isabs(a.labels) else os.path.join(RSNA, "labeler", a.labels)
     print(f"[labels] {_lab_path}", flush=True)
     soft = pd.read_parquet(_lab_path)
@@ -622,8 +480,7 @@ def main():
         gdf = pd.read_csv(a.group_csv)
         gdf["StudyInstanceUID"] = gdf["StudyInstanceUID"].astype(str)
         fp_of = dict(zip(gdf.StudyInstanceUID, gdf.fp.astype(str)))
-        # greedy balanced assignment: biggest fingerprints first into the lightest fold, so no
-        # fingerprint is ever split across the train/val boundary
+        # greedy balanced assignment: biggest fingerprints into the lightest fold, none split across train/val
         sizes = {}
         for u in train_ids:
             f = fp_of.get(u)
@@ -637,31 +494,17 @@ def main():
         group_val_ids = [u for u in train_ids if fp_of.get(u) in held]
         train_ids = [u for u in train_ids if fp_of.get(u) not in held]
         if a.reclaim > 0.0:
-            # Give most of the held-out fold BACK to training and validate on what is left.
-            # The shipped champion arms train on all 4,349 studies with no holdout at all; ours
-            # surrender 870 to have a gate, and they measure 0.009 behind at matched window count.
-            # This recovers most of that data while keeping a real, scanner-disjoint validation set.
-            # The split is by FINGERPRINT, not by study: splitting inside a fingerprint would put the
-            # same scanner on both sides and hand the validation set back its own training data.
+            # give most of the held-out fold back to training, split by FINGERPRINT so no scanner is on both sides
             _hf = sorted(held)
-            # FIXED split seed, deliberately not a.seed: arms in a pair are trained with different
-            # seeds, and if the reclaim split followed the training seed each arm would hold out a
-            # DIFFERENT set - so the pair could never be scored on common studies, which is the only
-            # way a pair has ever been evaluated here.
+            # FIXED split seed (not a.seed) so paired arms hold out the same studies
             _rng = np.random.default_rng(20260912)
             _rng.shuffle(_hf)
-            # Take whole fingerprints until 70% of the held-out STUDIES are covered. Taking 70% of
-            # the fingerprints instead returns a variable and much smaller share of studies - here it
-            # gave 362 of 870 (42%) - because fingerprints differ wildly in size.
+            # take whole fingerprints until 70% of held-out STUDIES are covered
             _size = {}
             for _u in group_val_ids:
                 _f = fp_of.get(_u)
                 _size[_f] = _size.get(_f, 0) + 1
-            # Take whole fingerprints, but NEVER let the validation set fall below (1 - reclaim) of
-            # the fold. Fingerprint sizes here are wildly skewed - 350, 118, 94, ... down to 1 - so
-            # simply accumulating until a target is crossed overshoots catastrophically: it returned
-            # 867 of 870 studies and left THREE to validate on. Skipping any fingerprint that would
-            # breach the floor yields 597 returned (69%) and 273 held back (31%).
+            # take whole fingerprints, but never let validation fall below (1 - reclaim) of the fold
             _tot = sum(_size.values())
             _floor = (1.0 - a.reclaim) * _tot
             _back, _acc = set(), 0
@@ -681,18 +524,10 @@ def main():
         print(f"[grouped] {len(sizes)} fingerprints -> {a.group_folds} folds, sizes {load}", flush=True)
         print(f"[grouped] holding out fold {a.group_fold}: {len(held)} fingerprints, "
               f"{len(group_val_ids)} studies; train {len(train_ids)}", flush=True)
-        # Check against the fingerprints STILL being validated on, not the original held set:
-        # --reclaim deliberately moves some of the held fingerprints back into training, so testing
-        # against `held` fires by construction. What must remain true is that nothing in training
-        # shares a fingerprint with anything in the validation set.
+        # nothing in training may share a fingerprint with the validation set
         _valfp = {fp_of.get(u) for u in group_val_ids}
         assert not ({fp_of.get(u) for u in train_ids} & _valfp), "scanner leaked across the split"
-        # Record exactly which studies this run validated on. Runs with a different --reclaim (or
-        # a different --group_fold) hold out DIFFERENT sets, so comparing their reported bests is
-        # meaningless: E0 validates on 350 studies and E1 on all 870 of the same fold, and E0 has
-        # trained on 520 of E1's. The only honest comparison is the INTERSECTION of the two val
-        # sets, and computing that needs this file. Cheap to write, impossible to reconstruct once
-        # the box is gone.
+        # record which studies this run validated on
         try:
             with open("valids_%s.csv" % a.tag, "w") as _vf:
                 _vf.write("StudyInstanceUID\n")
@@ -709,10 +544,7 @@ def main():
     print(f"train {len(train_ids)} | gold-val {len(gold_ids)}", flush=True)
 
     # pos_weight from soft-label prevalence (imbalance handling)
-    # ---- cell mask -----------------------------------------------------------------------
-    # Appended to each label vector so the Dataset, collate, mixup and slot paths are untouched:
-    # y becomes (24,) = 12 labels then 12 keep-flags, and make_loss splits it. evaluate() only ever
-    # indexes the first 12, so validation is unaffected by construction.
+    # ---- cell mask ----
     if a.cell_mask:
         _cm = pd.read_parquet(a.cell_mask)
         _cm["StudyInstanceUID"] = _cm["StudyInstanceUID"].astype(str)
@@ -750,8 +582,7 @@ def main():
     SLICE_DILATE = int(a.slice_dilate)
     print(f'[window] slices [c-{SLICE_DILATE}, c, c+{SLICE_DILATE}]', flush=True)
     CENTRE_FRAC = float(a.centre_frac)
-    # A recurrent head only means anything if the windows arrive in slice order, and the training
-    # sampler shuffles its bag. Switch that off for GRU runs only.
+    # GRU needs windows in slice order; the training sampler otherwise shuffles
     SORT_WINDOWS = (a.pool == "gru")
     print("[pool] %s%s" % (a.pool, " (windows sorted into slice order)" if SORT_WINDOWS else ""), flush=True)
     CROP_FRAC = float(a.crop_frac)
@@ -793,12 +624,7 @@ def main():
 
     head_params = [p for n_, p in model.named_parameters() if not n_.startswith("backbone.") and p.requires_grad]
     bb_params = [p for n_, p in model.named_parameters() if n_.startswith("backbone.") and p.requires_grad]
-    # LAYER-WISE LR DECAY. The shipped arms sit 0.0220 from their ImageNet init while the head moves
-    # 0.8953 - we have been training a 0.28M head on a frozen extractor. Raising the backbone rate
-    # was tried and failed (5e-5 -0.003, 1e-4 -0.014, 3e-4 diverges), but every one of those runs
-    # used ONE flat rate across all 72.9M parameters, so the early layers - which should barely move
-    # - got the same rate as the late ones that need to adapt. LLRD is the standard resolution:
-    # bb_lr applies to the TOP of the backbone and decays geometrically toward the input.
+    # layer-wise LR decay: bb_lr at the TOP of the backbone, decaying geometrically toward the input
     if a.llrd and a.llrd < 1.0:
         _named = [(n_, p_) for n_, p_ in model.backbone.named_parameters() if p_.requires_grad]
         _G = max(1, int(a.llrd_groups))
@@ -837,9 +663,7 @@ def main():
         P = np.concatenate(P); Y = np.concatenate(Y)
         aucs = {}
         for j, name in enumerate(LAB):
-            # Gold labels are already 0/1, but the scanner-grouped validation set carries SOFT
-            # labels in [0,1]; .astype(int) truncated those to all-zero, every class check failed
-            # and the macro mean came out NaN. Threshold at 0.5 - a no-op for the binary gold path.
+            # threshold at 0.5: soft val labels would truncate to all-zero under .astype(int)
             yb = (Y[:, j] >= 0.5).astype(int)
             if len(set(yb.tolist())) > 1:
                 aucs[name] = float(roc_auc_score(yb, P[:, j]))
@@ -857,9 +681,7 @@ def main():
         return
 
     best = 0.0; best_state = None; best_P = None; t0 = time.time(); hist = []
-    # EMA of the weights. A long schedule spends its last epochs oscillating around the optimum;
-    # the running average sits closer to it than any single step does, and it costs one extra copy
-    # of the weights and one lerp per step. We evaluate AND save the EMA weights when it is on.
+    # EMA of the weights (evaluated and saved when --ema is on)
     ema_model = None
     if a.ema and a.ema > 0:
         import copy as _copy
@@ -883,9 +705,7 @@ def main():
             x, y, s = (_b if len(_b) == 3 else (_b[0], _b[1], None))
             x, y = x.to(dev, non_blocking=True), y.to(dev, non_blocking=True)
             if a.mixup and a.mixup > 0 and x.shape[0] > 1:
-                # Study-level mixup: blend whole studies and their SOFT label vectors by the same
-                # lambda. BCE takes soft targets natively, so no loss change is needed. Slot ids are
-                # left untouched - they index the sequence, not the pixels.
+                # study-level mixup: blend whole studies and their soft label vectors by the same lambda
                 _lam = float(np.random.beta(a.mixup, a.mixup))
                 _perm = torch.randperm(x.shape[0], device=x.device)
                 x = _lam * x + (1.0 - _lam) * x[_perm]
@@ -910,20 +730,14 @@ def main():
         if au > best:
             best = au; best_P = P
             _src_model = ema_model if ema_model is not None else model
-            # Record the GEOMETRY too. StudyWindows reads module globals, so anything scoring this
-            # arm later has to restore them - a 3-series arm evaluated on the full 5-series volume
-            # reads systematically low. Without this the checkpoint cannot say what it needs.
+            # record the geometry too: StudyWindows reads module globals, restored when this arm is scored later
             best_state = {"model": {k: v.detach().cpu() for k, v in _src_model.state_dict().items()},
                           "slots": list(KEEP_SLOTS) if KEEP_SLOTS else None,
                           "centre_frac": CENTRE_FRAC, "crop_frac": CROP_FRAC,
                           "slice_dilate": SLICE_DILATE, "pool": a.pool,
                           "gold_auc": au, "aucs": aucs, "src": src, "res": a.res,
                           "arch": a.arch, "lab": LAB, "epoch": ep}
-            # Write the checkpoint AS SOON AS it improves, not only after the final epoch. A 5-hour
-            # CoAtNet run held its only copy in memory until the loop ended, so a box dying at
-            # epoch 15 of 16 would have lost everything - and it also made the arm impossible to
-            # measure mid-flight when a decision depended on it. Atomic rename so a kill during the
-            # write cannot leave a truncated file.
+            # write the checkpoint as soon as it improves; atomic rename so a kill mid-write can't truncate
             try:
                 _tmp = os.path.join(HERE, "raptor_ft_%s.pt.partial" % a.tag)
                 torch.save(best_state, _tmp)

@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Screen test-time augmentation on the SCANNER-DISJOINT fold. No board submit needed.
+"""Screen test-time augmentation on the scanner-disjoint fold. No board submit needed.
 
-TTA has never been submitted on this competition - checked all 50 entries, none mention it - and
-unlike every other AUC idea on the closed list it needs NO retraining. This screens it honestly:
-the gate arm was trained with grouped fold 0 excluded, so fold 0 is a clean held-out set for it.
-
-The TTA ops are chosen to preserve LATERALITY, which is signal here (5 of 12 findings are
-side-specific and the model resolves side correctly - see the laterality refutation). So NO
-horizontal flip. Slice-order reversal flips the DEPTH axis (the 3 consecutive slices that form the
-RGB channels), not left-right, and scale/gamma are geometry-free.
+TTA ops preserve laterality (5 of 12 findings are side-specific): no horizontal flip; slice-order
+reversal flips the depth axis, not left-right; scale/gamma are geometry-free.
 """
 import os, sys, json, argparse
 import numpy as np, pandas as pd, torch, torch.nn.functional as F

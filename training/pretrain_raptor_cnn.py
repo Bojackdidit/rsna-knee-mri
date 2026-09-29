@@ -1,14 +1,5 @@
 """Raptor SSL pretraining -- DINO self-distillation on the knee-MRI corpus.
 
-Raptor is OUR base model: a ViT-S/16 (public architecture, random init) that WE
-self-supervised-pretrain on ~104k 2.5D knee windows (all_vols.npy). No DINO/Meta weights --
-the DINO *method* (self-distillation, EMA teacher, multi-crop) applied to our data to birth a
-clean, compact, knee-specialized encoder with room to expand. Runs bf16 on a single 4070Ti.
-
-Faithful DINO (Caron et al. 2021): student+teacher same arch; teacher = EMA of student (no grad);
-multi-crop (2 global + L local); teacher sees globals only; loss = CE(teacher_center_sharpen ||
-student) across differing views; centering EMA; temp warmup; last-layer frozen first epoch.
-
 Usage:
   python pretrain_raptor.py --smoke                # tiny sanity run on CPU/GPU
   python pretrain_raptor.py --epochs 120 --bs 64   # full pretrain (background)

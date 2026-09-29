@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Put the improved ORDERING onto the champion label set's own distribution.
-
-labels_confdist is what both shipped arms were trained on and what boards 0.941, so its per-finding
-marginals are the regime the trainer, the pos_weight and the loss are all tuned for. Quantile-mapping
-the blend+repair ranks onto those marginals changes the ORDER of the studies and nothing else - same
-range, same prevalence, same scale. That makes the resulting board read attributable to the label
-ordering alone, with no distribution shift riding along.
-
-It also drops the 58 gold studies, exactly as confdist does, so they stay an untouched ruler.
-"""
+"""Put the improved ORDERING onto the champion label set's own distribution."""
 import json
 import numpy as np, pandas as pd
 from scipy.stats import rankdata
@@ -47,7 +38,7 @@ print("range: confdist [%.3f, %.3f]  new [%.3f, %.3f]"
       % (tgt.min(), tgt.max(), out.min(), out.max()))
 print("rows %d (gold-58 excluded, same as confdist)" % len(df))
 
-# how different is the ORDER from confdist? if it were ~1.0 there would be nothing to test.
+# rank correlation of the new order vs confdist per finding
 r = [np.corrcoef(rankdata(out[:, j]), rankdata(tgt[:, j]))[0, 1] for j in range(12)]
 print("rank correlation to confdist per finding: " + " ".join("%.2f" % x for x in r))
 print("mean %.3f - the lower this is, the more the board read is actually testing something" % np.mean(r))

@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""Fine-tune Raptor (our SSL knee encoder) on the 12-finding RSNA knee task.
-
-Loads the Raptor ViT-S/16 backbone from an SSL checkpoint, attaches a per-diagnosis
-attention-MIL head, and FULLY fine-tunes (trainable encoder) on LLM soft labels.
-Gate = macro-AUC on the 45 in-corpus gold studies (held out of training).
-
-Design mirrors the proven recipe (per-finding attention over the slice/window set,
-weighted BCE, AdamW OneCycle) but with the encoder trainable instead of frozen features.
-
-Runs bf16 on a single 4070Ti.
-
-Controls / gate:
-  * --ckpt raptor_ssl_last.pt   fine-tune the finished Raptor encoder
-  * --ckpt none                 random-init ViT-S control (proves SSL pretrain adds value)
-  * early ckpt (e.g. raptor_ssl_ep20.pt) validates the pipeline fast
-
-Examples:
-  python finetune_raptor.py --smoke                         # tiny correctness run
-  python finetune_raptor.py --ckpt ckpt/raptor_ssl_ep20.pt --limit 800 --epochs 4   # pipeline-validate
-  python finetune_raptor.py --ckpt ckpt/raptor_ssl_last.pt --epochs 12 --tag full   # real run
-Outputs (per --tag): raptor_ft_<tag>.pt (best), raptor_gold_<tag>.npz (gold preds+truth+ids), raptor_ft_<tag>.json
-"""
+"""Fine-tune Raptor (our SSL knee encoder) on the 12-finding RSNA knee task."""
 import os, sys, time, json, math, random, argparse
 import numpy as np, pandas as pd
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -35,11 +14,6 @@ DATA = os.environ.get("KNEE_DATA_ROOT",
 RSNA = os.path.dirname(DATA)  # .../rsna_knee (train.csv, labeler/)
 CENTRE_FRAC = 1.0   # set from --centre_frac; 1.0 = original full-range sampling
 CROP_FRAC = 1.0     # set from --crop_frac; centre-crop of H,W before resize (joint magnification)
-# The 44-slice corpus is FIVE SEQUENCE SLOTS concatenated, boundaries recovered from the mask's
-# per-index validity: 12/10/8/6/8 = Sagittal-FS, Sagittal, Coronal-FS, Coronal, Axial (slot 3 is
-# present in only 74% of studies). Inference opens EVERY DICOM header in EVERY series to sort
-# slices, so fewer SERIES is the only lever on scoring time - and the arm must be trained on the
-# same subset or it is a train/serve mismatch.
 CORPUS_SLOTS = [(0, 12), (12, 22), (22, 30), (30, 36), (36, 44)]
 KEEP_SLOTS = None   # set from --slots, e.g. '0,2,4' keeps the three fat-suppressed series
 LAB = ["ACL","MCL","Medial Meniscus","Lateral Meniscus","Medial OA","Lateral OA","PF OA",
@@ -74,15 +48,7 @@ class StudyWindows(Dataset):
         lo, hi = int(valid.min()), int(valid.max())
         cs = [c for c in range(lo + 1, hi) if c - 1 >= lo and c + 1 <= hi]
         if not cs: cs = [max(1, min((lo + hi) // 2, self._D - 2))]
-        # Centre-concentrated sampling. Both branches below otherwise spread windows across the
-        # WHOLE valid range (train shuffles all of it, eval linspaces all of it), which is the
-        # losing arm of a published slice-geometry result for this competition:
-        #   192px / no crop / 24 spread      0.7695 OOF
-        #   288px / 140mm crop / 12 adjacent 0.7777
-        #   288px / 140mm crop / centre-9    0.7815
-        # ("slice geometry mattered more than resolution"). CENTRE_FRAC keeps only the middle
-        # fraction of candidate centres, applied identically to train and eval so the two stay
-        # consistent. 1.0 reproduces the previous behaviour exactly.
+        # CENTRE_FRAC keeps only the middle fraction of candidate centres (train and eval alike).
         if CENTRE_FRAC < 1.0 and len(cs) > 3:
             keep = max(3, int(round(len(cs) * CENTRE_FRAC)))
             mid = (len(cs) - keep) // 2
@@ -116,12 +82,7 @@ class StudyWindows(Dataset):
             c = max(1, min(c, self._D - 2))
             tri = np.stack([vol[c - 1], vol[c], vol[c + 1]], 0).astype(np.float32) / 255.0  # (3,H,W)
             t = torch.from_numpy(tri)
-            # ROI crop: keep the middle CROP_FRAC of H,W so the joint fills more of the frame before
-            # the resize. a published ladder put a 140mm physical crop at the centre of the only
-            # geometry result anyone published, and this is the one lever on our pipeline still
-            # outside the ~0.008 band where seven architectural levers all died.
-            # Train jitters the crop centre by +/-4% for augmentation; eval takes the exact centre so
-            # it matches what the inference kernel must do.
+            # ROI crop: keep the middle CROP_FRAC of H,W. Train jitters the centre +/-4%; eval takes the exact centre.
             if CROP_FRAC < 1.0:
                 _H, _W = int(t.shape[-2]), int(t.shape[-1])
                 _ch, _cw = int(round(_H * CROP_FRAC)), int(round(_W * CROP_FRAC))
@@ -256,9 +217,6 @@ def main():
     tr = pd.read_csv(os.path.join(RSNA, "train.csv")); tr["StudyInstanceUID"] = tr["StudyInstanceUID"].astype(str)
     gold_df = tr[tr[LAB].notna().all(axis=1)].copy().set_index("StudyInstanceUID")
     gold_ids = [u for u in gold_df.index if u in idset]
-    # Which soft-label set to train on. Our BEST live arm (confdist_swa, gold 0.9266) was fitted
-    # on labels_confdist.parquet, while the default here is the plain LLM set - which is why a
-    # fresh 8-epoch run reproduced only 0.8785. All sets are drop-in: 4349 rows, same 13 columns.
     _lab_path = a.labels if os.path.isabs(a.labels) else os.path.join(RSNA, "labeler", a.labels)
     print(f"[labels] {_lab_path}", flush=True)
     soft = pd.read_parquet(_lab_path)

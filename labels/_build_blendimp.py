@@ -1,29 +1,5 @@
 #!/usr/bin/env python3
-"""Build the candidate training label set: rank-blend of two independent extractions, then a
-TARGETED repair of the cells where the report never addressed the finding.
-
-Two separate mechanisms, measured separately so the board read is interpretable:
-
-1. BLEND. Ours (E[s] over the severity distribution, 0.8947 on gold-58) rank-averaged per finding
-   with stevenleehans' v4 (0.8927). Two independent readings of the same reports, comparable
-   strength, so averaging cancels extraction variance. This is what Yann Majewski attributes
-   +0.015 of BOARD score to at 0.936, which is the only competitor-attributed number of that size
-   in the competition.
-
-2. SILENCE REPAIR. Our labeller emits a near one-hot severity distribution, so "the report never
-   mentions this" becomes a CONFIDENT ZERO - a false negative wherever silence does not imply
-   absence. pilkwang's independent labeller marks those cells UNK, and its UNK rates match
-   stevenleehans' independently measured "not addressed" rates (Synovitis 84.2 vs 83.7, ACL 8.1 vs
-   8.3), so the silence signal itself is corroborated across two labellers.
-
-   Which findings to repair is taken from stevenleehans' PUBLISHED per-finding result
-   (Synovitis, PF OA, Fracture help; Baker's, Contusion, Lateral OA hurt) - chosen OUTSIDE our own
-   58-study ruler on purpose. They measured that picking the set using gold scored WORSE (0.8845)
-   than the disciplined choice (0.8873); selecting on a 58-study ruler is how you fit the ruler.
-
-Ridge imputation is fit on the 4,407-study corpus with the gold studies removed, so gold is used
-once, to score.
-"""
+"""Build the candidate training label set: rank-blend of two extractions plus a targeted silence repair."""
 import json, os
 import numpy as np, pandas as pd
 from scipy.stats import rankdata
@@ -33,12 +9,6 @@ from sklearn.metrics import roc_auc_score
 LAB = ['ACL','MCL','Medial Meniscus','Lateral Meniscus','Medial OA','Lateral OA','PF OA',
        'Effusion','Synovitis',"Baker's",'Contusion','Fracture']
 REPAIR_PUB = ['Synovitis', 'PF OA', 'Fracture']      # stevenleehans' published set
-# Their set, measured on OUR labels, splits: PF OA +0.0457 and Fracture +0.0444, but Synovitis
-# -0.0550. The cause is identifiable rather than statistical - their Synovitis column scored 0.678
-# and had nothing to lose, ours scores 0.8172 inside the blend, so overwriting 84% of it with a
-# ridge guess destroys signal that is already there. Dropping Synovitis IS a selection made on the
-# 58-study ruler; it is defensible only because -0.055 is far outside that ruler's ~0.02 resolution
-# and because the mechanism is legible. Both variants are written; the board picks.
 REPAIR = ['PF OA', 'Fracture']
 
 tr = pd.read_csv("train.csv", encoding="latin-1")
@@ -138,12 +108,7 @@ print("wrote labels_%s.parquet  (gold-58 macro %.4f vs %.4f for ours alone)"
 print("58 studies cannot resolve under ~0.02 and have mispredicted the board 8+ times.")
 print("This ranks a CANDIDATE. The board decides.")
 
-# ---------------------------------------------------------------------------
-# CALIBRATION. A rank blend is uniform on [0,1], so every column would look 50% prevalent and the
-# trainer's pos_weight (built from the label mean) would be wrong for all twelve findings. Map each
-# blended column back through the marginal distribution of our own E[s] column: a strictly monotone
-# transform, so the ordering - and therefore every AUC above - is untouched, while the scale and
-# prevalence become the ones the loss expects.
+# calibration: quantile-map each blended column onto our own E[s] marginals so scale/prevalence match the loss
 o = np.sort(ours, axis=0)
 cal = np.empty_like(imp3)
 for j in range(12):

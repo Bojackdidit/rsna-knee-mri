@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Anti-scanner augmentation, judged on the CORRECT instrument for the first time.
-
---aug_scanner was refuted once (SCANNER_ARM/SCANNER_E24) on gold-58 - a scanner-CONTAMINATED gate
-that structurally rewards the very scanner shortcut aug_scanner removes, so it was always going to
-look worse there. This compares the anti-scanner arm (SCAN_GEN_F0) against the identical-recipe
-control (LR96_CTRL) on the SAME 870 held-out-SCANNER studies of scanner-grouped fold-0 - the honest
-cross-scanner generalization gate, which aug_scanner has never been measured on.
-
-Decision: does aug_scanner lift held-out-scanner macro-AUC beyond the 0.0028 OOF noise floor, and
-does it shrink the per-scanner AUC spread (the mechanism)? If yes -> board-test. If flat/down on the
-right instrument too -> aug_scanner is genuinely dead, closed properly this time.
-"""
+"""Anti-scanner augmentation, judged on the scanner-disjoint fold-0 OOF instrument."""
 import numpy as np, pandas as pd, os
 from sklearn.metrics import roc_auc_score
 

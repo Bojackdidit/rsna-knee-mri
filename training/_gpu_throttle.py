@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """Keep a local GPU job from making Dread's desktop unusable.
 
-The 4070 Ti drives his display. Two things make the box unusable: exhausting the 12 GB
-(the compositor starts thrashing) and holding the SM at 100% for hours. Both are capped
-here in code rather than by anyone watching a terminal.
-
-  VRAM   torch.cuda.set_per_process_memory_fraction - a hard allocator ceiling.
-  DUTY   after each batch, sleep in proportion to how long that batch took, so our
-         share of the SM stays near DUTY. Measured per batch, so it adapts to K.
-  TEMP   checked every few seconds; over the limit we add extra sleep until it drops.
-
-Nothing here is specific to a script - it monkeypatches DataLoader, so the caller runs
-unmodified. Env overrides: KNEE_VRAM_FRAC, KNEE_DUTY, KNEE_TEMP_LIMIT.
+Caps VRAM, paces each DataLoader by duty cycle, and backs off on temperature.
+Env overrides: KNEE_VRAM_FRAC, KNEE_DUTY, KNEE_TEMP_LIMIT.
 """
 import os
 import subprocess
@@ -77,11 +68,7 @@ def install(frac=None, duty=None, temp_limit=None, verbose=True):
         return
     _installed = True
 
-    # These scripts were written for the Vast boxes, where DataLoader workers fork.
-    # Windows spawns instead: each worker re-imports the main module, and a script with
-    # no __main__ guard re-runs itself. Worse, the respawn here came back on the CPU-only
-    # system Python rather than this venv, so it hung holding 1.4 GB. Clamp workers to 0
-    # unless someone opts in explicitly, so the unmodified scripts are safe on this box.
+    # Windows spawn re-imports the module per worker; clamp workers to 0 unless opted in via KNEE_WORKERS.
     workers = int(os.environ.get("KNEE_WORKERS", 0))
     _orig_init = DataLoader.__init__
 

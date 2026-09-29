@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Full-instrument architecture-diversity read: CoAtNet 5-fold OOF vs ConvNeXt 5-fold OOF vs their
-rank-mean blend, over all 4,349 out-of-fold studies (bootstrap sd ~0.0028 - far tighter than the
-single-fold 870 read). Answers, on the honest instrument: does adding a ConvNeXt fold-panel to the
-CoAtNet fold-panel lift the ensemble, and by how much. Pure numpy.
-"""
+"""Full-instrument architecture-diversity read: CoAtNet 5-fold OOF vs ConvNeXt 5-fold OOF vs their rank-mean blend. Pure numpy."""
 import numpy as np
 from sklearn.metrics import roc_auc_score
 

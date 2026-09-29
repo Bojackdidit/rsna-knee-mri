@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """Run a Vast-written knee script on Dread's local box under the GPU throttle.
 
-The scripts under knee/ assume a rented Linux box with the card to themselves. This
-wrapper installs the VRAM cap, duty-cycle pacing and Windows DataLoader safety first,
-then hands over to the script unmodified, so there is one copy of each script rather
-than a local fork that drifts.
-
     python _run_sweep.py <script.py> [args...]
 """
 import os
