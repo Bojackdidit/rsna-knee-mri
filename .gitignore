@@ -1,0 +1,19 @@
+# Weights, corpus, and labels live on Kaggle (see README), not in git
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.parquet
+*.csv
+
+# Environments and caches
+__pycache__/
+*.pyc
+.venv*/
+venv/
+
+# Logs and scratch
+*.log
+*.err
+*.out
