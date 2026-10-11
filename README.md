@@ -18,7 +18,8 @@ The score moved from 0.945 to 0.951 by changing how the same weights are served,
 | `data/` | The direct DICOM reader (`fastdcm.py`), the builders that turn studies into 2.5D slice stacks, and scanner fingerprinting. |
 | `labels/` | Twelve-finding soft labels distilled from the free-text radiology reports. |
 | `evaluation/` | The scanner-grouped out-of-fold gate, arm correlation, and blend weighting. |
-| `kernels/` | The Kaggle inference notebooks — the 0.945 champion and the variants tested against it. |
+| `kernels/` | The Kaggle inference notebooks — the 0.951 champion and the variants tested against it. |
+| `tools/` | The builder that assembles an inference notebook from a public source notebook with our arm swapped in. |
 | `docs/` | The catalog of what has been tried and closed. |
 | `archive/` | Every other experiment script and kernel variant, kept for reference. |
 
@@ -58,7 +59,16 @@ python training/finetune_box.py --arch coatnet_rmlp_2_rw_384.sw_in12k_ft_in1k \
 python evaluation/gate_eval.py raptor_ft_<tag>.pt <tag>
 
 # 4. ship: the inference notebook loads the arm weights and predicts
-kernels/champion-coatnet-plus-convnext.ipynb
+kernels/champion-coatnet-published-reader.ipynb
 ```
 
-Backbones are `timm`; inference reads DICOM directly and runs under the competition's one-hour limit on two T4s.
+Backbones are `timm`; inference reads DICOM directly and runs under the competition's limit on two T4s.
+
+`kernels/champion-coatnet-published-reader.ipynb` is the notebook that scored 0.951. The code is
+committed as it ran, so it matches the submission; only the one prose cell was rewritten. `tools/port_pub_pipeline.py` is what built it:
+it takes a public source notebook, swaps our arm in, drops the upstream prose, and refuses to write
+the result if the geometry it would claim does not match the geometry it serves.
+
+`evaluation/board_position.py` reports where a score stands. It prints the number of teams strictly
+above, because that needs no assumption about how a shared score is ordered, and reads our own rank
+from the published board rather than inferring it.
