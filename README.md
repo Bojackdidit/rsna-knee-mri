@@ -29,7 +29,17 @@ Weights, the corpus, and the labels are too large for git and live on Kaggle:
 
 - Corpus (2.5D slice stacks): [`knee-raptor-corpus`](https://www.kaggle.com/datasets/dreaddevelopment/knee-raptor-corpus) and [`knee-raptor-corpus-ext`](https://www.kaggle.com/datasets/dreaddevelopment/knee-raptor-corpus-ext)
 - Soft labels: [`rsna-knee-labels`](https://www.kaggle.com/datasets/dreaddevelopment/rsna-knee-labels)
-- Arm weights: attached to each kernel; the champion arms are in [`raptor-knee-widedense`](https://www.kaggle.com/datasets/dreaddevelopment/raptor-knee-widedense)
+- Arm weights: attached to each kernel; our arms are in [`raptor-knee-widedense`](https://www.kaggle.com/datasets/dreaddevelopment/raptor-knee-widedense) and [`raptor-knee-scratch-aug2`](https://www.kaggle.com/datasets/dreaddevelopment/raptor-knee-scratch-aug2)
+
+The 0.951 notebook needs three datasets attached. One is ours, two are not:
+
+| Dataset | Holds |
+|---|---|
+| [`raptor-knee-scratch-aug2`](https://www.kaggle.com/datasets/dreaddevelopment/raptor-knee-scratch-aug2) | our CoAtNet-384 arm |
+| [`nartaa/rsna-knee-publication-swa-weights-20261007`](https://www.kaggle.com/datasets/nartaa/rsna-knee-publication-swa-weights-20261007) | the second 384px checkpoint, and the 224-crop one the route also mounts |
+| [`goodpjw2008/rsna-knee-2-5d-convnext-reader`](https://www.kaggle.com/datasets/goodpjw2008/rsna-knee-2-5d-convnext-reader) | three of five cross-validation folds of the 2.5D ConvNeXt reader |
+
+Without all three the notebook stops on a missing file rather than scoring a partial blend.
 
 ## What each part is worth
 
