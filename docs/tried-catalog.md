@@ -1,6 +1,40 @@
-# RSNA Knee — Definitive "Already Tried" Catalog (2026-09-29)
+# RSNA Knee — Definitive "Already Tried" Catalog (updated 2026-10-11)
 Built from a full read of all ~55 knee memory files + the Sept ANS log. READ THIS before proposing or
-running anything, so we never backtrack. Champion **0.945**; leaders 0.957/0.959. Board noise ±0.002-0.003.
+running anything, so we never backtrack. Champion **0.951**; leaders 0.964/0.965. Board noise ±0.002-0.003.
+
+## Since 2026-09-29 — every read below is the leaderboard, one change at a time
+
+The whole gain came from serving, not training.
+
+| Change | Read |
+|---|---|
+| Our arm through the ported public serving pipeline, 320px | 0.941 → 0.946 |
+| Our pair through the same pipeline | 0.947 |
+| Our arm + the published 384px checkpoint | 0.950 |
+| That pair + a three-fold 2.5D ConvNeXt reader | **0.951** |
+| A fresh nine-hour arm | +0.001 |
+
+Closed since, all on the board:
+
+- **Per-finding routing — third negative.** A build that routed one finding scored 0.951; its control,
+  identical except the routing was left off, also scored 0.951. Exactly nothing. Earlier reads were
+  0.943 against a 0.945 control, and a three-family trio at 0.943.
+- **The 224-crop engine adds nothing** at the weight the published route gives it. Same pair of reads.
+  Three attempts went into repairing that leg before the tie showed it does not matter.
+- **Our arm is three thousandths behind the published checkpoint.** Same route, same reader, one arm
+  each: ours 0.947, theirs 0.950. It stays in the blend anyway — dropping it costs a thousandth,
+  because it gets different studies wrong.
+- **A label arm loses 0.014.** Our arm trained on a different blend of report-derived labels, paired
+  with the published checkpoint, read 0.9360 where the same pair with our usual arm read 0.9500.
+- **Restricting eval windows to fully-present slices is worth zero.** 0.9500 both ways, same two arms.
+- **Two serving routes tie** when given identical components. The route was never the difference.
+- **The published frontier is below us.** Cross-referenced every username on the teams above us against
+  every public notebook author: 40 teams publish. Their own notebooks claim 0.941-0.943. A team's board
+  score is its best submission, not the notebook it released.
+- **The scores above us mostly rest on weights we cannot use.** Of four public kernels claiming 0.954,
+  three attach a bundle whose own description says no licence is granted. The stack behind the 0.959
+  and 0.962 teams has four components under a non-commercial licence, and every freely-licensed piece
+  of it is the same backbone family we already run.
 
 ## DO NOT RE-RUN — closed with evidence
 - **Backbones:** CoAtNet-384 (champion, saturated 0.921-0.926), ConvNeXt-B-384 (partner, KEEP),

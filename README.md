@@ -6,7 +6,9 @@
 
 Our solution for the [RSNA Knee MRI abnormality detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection) competition: twelve findings per study (ACL, MCL, meniscus, osteoarthritis, effusion, synovitis, Baker's cyst, contusion, fracture), scored by macro ROC-AUC.
 
-Best public score **0.945**. Two backbones — a CoAtNet and a ConvNeXt at 384px — read short stacks of adjacent slices, pool them with a per-finding attention layer, and combine by rank average. The two are trained on the same data but disagree enough that the pair beats either alone.
+Best public score **0.951**. A CoAtNet at 384px reads short stacks of adjacent slices and pools them with a per-finding attention layer. It is rank-averaged with a second 384px checkpoint, and a three-fold 2.5D ConvNeXt reader is mixed in per finding. Studies are cropped to a 140 mm box, served at 320px, 94 windows per study, with anatomical mirroring.
+
+The score moved from 0.945 to 0.951 by changing how the same weights are served, not by training anything new. Putting one of our existing arms through a better serving pipeline was worth **+0.005**. A fresh nine-hour arm was worth **+0.001**. Every submission since has tested a serving change at fixed weights.
 
 ## Layout
 
@@ -27,6 +29,20 @@ Weights, the corpus, and the labels are too large for git and live on Kaggle:
 - Corpus (2.5D slice stacks): [`knee-raptor-corpus`](https://www.kaggle.com/datasets/dreaddevelopment/knee-raptor-corpus) and [`knee-raptor-corpus-ext`](https://www.kaggle.com/datasets/dreaddevelopment/knee-raptor-corpus-ext)
 - Soft labels: [`rsna-knee-labels`](https://www.kaggle.com/datasets/dreaddevelopment/rsna-knee-labels)
 - Arm weights: attached to each kernel; the champion arms are in [`raptor-knee-widedense`](https://www.kaggle.com/datasets/dreaddevelopment/raptor-knee-widedense)
+
+## What each part is worth
+
+Measured on the leaderboard, one change at a time against a score already on the board.
+
+| Change | Read |
+|---|---|
+| Our arm through the better serving pipeline | 0.941 → 0.946 |
+| Adding the second 384px checkpoint | 0.946 → 0.950 |
+| Adding the three-fold reader | 0.950 → 0.951 |
+| Our arm alone vs the second checkpoint alone, same route and reader | 0.947 vs 0.950 |
+| Dropping our arm from the blend | 0.951 → 0.950 |
+
+The fourth row is the uncomfortable one: head to head our arm is three thousandths behind. The fifth row is why it stays in — it still adds a thousandth, because it gets different studies wrong.
 
 ## Reproduce
 
