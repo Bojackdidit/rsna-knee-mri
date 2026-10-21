@@ -6,9 +6,33 @@
 
 Our solution for the [RSNA Knee MRI abnormality detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection) competition: twelve findings per study (ACL, MCL, meniscus, osteoarthritis, effusion, synovitis, Baker's cyst, contusion, fracture), scored by macro ROC-AUC.
 
-Best public score **0.951**. A CoAtNet at 384px reads short stacks of adjacent slices and pools them with a per-finding attention layer. It is rank-averaged with a second 384px checkpoint, and a three-fold 2.5D ConvNeXt reader is mixed in per finding. Studies are cropped to a 140 mm box, served at 320px, 94 windows per study, with anatomical mirroring.
+Best public score **0.958**. A CoAtNet at 384px reads short stacks of adjacent slices and pools them with a per-finding attention layer. It is rank-averaged with a second 384px checkpoint, and a three-fold 2.5D ConvNeXt reader is mixed in per finding. Studies are cropped to a 140 mm box, served at 320px, 94 windows per study, with anatomical mirroring.
 
 The score moved from 0.945 to 0.951 by changing how the same weights are served, not by training anything new. Putting one of our existing arms through a better serving pipeline was worth **+0.005**. A fresh nine-hour arm was worth **+0.001**. Every submission since has tested a serving change at fixed weights.
+
+## The two selected entries
+
+Two submissions score on the private leaderboard. These are the two.
+
+| Kernel | Public | What scores in it |
+|---|---|---|
+| `kernels/final-raptor-pair.ipynb` | 0.947 | Only our weights. A CoAtNet-384 and a ConvNeXt-Base-384 rank-averaged at equal weight. No published checkpoint, no reader, no fitted parameters. |
+| `kernels/final-spine-with-raptor-arm.ipynb` | 0.957 | The published CoAtNet at 384 and at a 0.8 crop to 224, a four-fold R6 ConvNeXt, and our own CoAtNet arm entering the finished per-finding rank at 0.08. |
+
+They share no scoring checkpoint. The first is the method on its own; the second is the method
+inside the configuration most of the field is running, with our arm added.
+
+Our own weights cost public score, measured one step at a time on the same subset:
+
+| Share of the final rank held by our weights | Public |
+|---|---|
+| 100% (the pure pair) | 0.947 |
+| 25% | 0.956 |
+| 8% | 0.957 |
+| 0% (the public configuration unchanged) | 0.958 |
+
+The pure entry carries no fitted parameters, so nothing in it can be tuned to the public split.
+That is the reason it is selected over a higher-scoring copy of the public configuration.
 
 ## Layout
 
@@ -18,7 +42,7 @@ The score moved from 0.945 to 0.951 by changing how the same weights are served,
 | `data/` | The direct DICOM reader (`fastdcm.py`), the builders that turn studies into 2.5D slice stacks, and scanner fingerprinting. |
 | `labels/` | Twelve-finding soft labels distilled from the free-text radiology reports. |
 | `evaluation/` | The scanner-grouped out-of-fold gate, arm correlation, and blend weighting. |
-| `kernels/` | The Kaggle inference notebooks — the 0.951 champion and the variants tested against it. |
+| `kernels/` | The Kaggle inference notebooks — the two selected entries and the variants tested against them. |
 | `tools/` | The builder that assembles an inference notebook from a public source notebook with our arm swapped in. |
 | `docs/` | The catalog of what has been tried and closed. |
 | `archive/` | Every other experiment script and kernel variant, kept for reference. |
