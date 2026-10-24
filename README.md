@@ -6,6 +6,8 @@
 
 Our solution for the [RSNA Knee MRI abnormality detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection) competition: twelve findings per study (ACL, MCL, meniscus, osteoarthritis, effusion, synovitis, Baker's cyst, contusion, fracture), scored by macro ROC-AUC.
 
+Final standing **977th of 6,425**, private 0.942. The full method, what external data did, and what the private board showed are in [SOLUTION.md](SOLUTION.md).
+
 Best public score **0.958**. A CoAtNet at 384px reads short stacks of adjacent slices and pools them with a per-finding attention layer. It is rank-averaged with a second 384px checkpoint, and a three-fold 2.5D ConvNeXt reader is mixed in per finding. Studies are cropped to a 140 mm box, served at 320px, 94 windows per study, with anatomical mirroring.
 
 The score moved from 0.945 to 0.951 by changing how the same weights are served, not by training anything new. Putting one of our existing arms through a better serving pipeline was worth **+0.005**. A fresh nine-hour arm was worth **+0.001**. Every submission since has tested a serving change at fixed weights.
